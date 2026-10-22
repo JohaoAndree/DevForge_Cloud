@@ -1,0 +1,8 @@
+config:
+  devforge-cloud:environment: "dev"
+  devforge-cloud:replicas: 1
+  devforge-cloud:lb_port: 8080
+  devforge-cloud:enable_pgadmin: true
+  devforge-cloud:pgadmin_port: 5050
+  devforge-cloud:db_name: "devforgedb"
+  devforge-cloud:db_user: "devforge_user"
