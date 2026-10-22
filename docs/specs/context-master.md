@@ -104,15 +104,30 @@ graph TD
 
 ## 6. Hoja de Ruta y Grafo de ADRs
 
-| ID | Etapa | Título | Estado | Depende de | Alcance de Implementación (Resumen Parte B) |
+**Corte de seguimiento: 22-10-2026.** El estado de aprobación se toma de cada ADR; el avance se contrasta con sus registros y los archivos presentes en el repositorio. Una decisión aceptada no implica que su implementación esté terminada.
+
+| ID | Etapa | Decisión | Estado del ADR | Depende de | Avance y evidencia de implementación |
 | --- | --- | --- | --- | --- | --- |
-| **ADR-001** | `E1` | Elección de Pulumi con Python como Motor y Lenguaje de IaC | `Accepted` | — | Setup base (`Pulumi.yaml`, `requirements.txt`), `__main__.py` inicial y tests de bootstrap con mocks.|
-| **ADR-002** | `E1` | Uso de Docker Provider Local y Aislamiento Multi-Entorno mediante Pulumi Stacks | `Proposed` | ADR-001 | Configuración de `Pulumi.dev.yaml` y `Pulumi.prod.yaml`, contrato tipado de configuración y aprovisionamiento de redes aisladas (`dev-net`, `prod-net`).|
-| **ADR-003** | `E2` | Patrón de Modularización (`ComponentResource`) y Balanceo de Carga | `Proposed` | ADR-002 | Implementación de `components/environment_stack.py` (PostgreSQL + volumen, PgAdmin condicional, $N$ réplicas `whoami` y balanceador Round-Robin).|
-| **ADR-004** | `E3`/`E4` | Estrategia de Evolución para Gobernanza (*Policy as Code*), Cloud y CI/CD | `Proposed` | ADR-003 | Suite Pulumi CrossGuard, adaptador hacia nube pública (Azure/AWS) y workflow de GitHub Actions.|
+| [ADR-001](../adrs/ADR-001.md) | `E1` | Pulumi con Python como motor y lenguaje de IaC | `Accepted` (22-10-2026) | — | Implementado: manifiesto Python con `venv`, dependencias, metadatos del proyecto y pruebas de bootstrap. Registro: 3 pasos documentados. |
+| [ADR-002](../adrs/ADR-002.md) | `E1` | Docker local y aislamiento mediante Pulumi Stacks | `Accepted` (22-10-2026) | ADR-001 | Implementado: YAML de `dev`/`prod`, contrato inmutable `EnvironmentConfig`, validaciones y redes bridge `devforge-dev-net` / `devforge-prod-net`. Registro: 4 pasos documentados. |
+| [ADR-003](../adrs/ADR-003.md) | `E2` | Modularización con `ComponentResource` y balanceo de carga | `Accepted` (22-10-2026) | ADR-002 | Implementado: `DevForgeEnvironment`, PostgreSQL con volumen, PgAdmin condicional, réplicas `whoami`, Nginx y outputs del orquestador. Registro: 4 pasos documentados; grafo cubierto con mocks. |
+| [ADR-004](../adrs/ADR-004.md) | `E3` / `E4` | Gobernanza, portabilidad cloud y automatización GitOps | `Accepted` (22-10-2026) | ADR-003 | Pendiente: el Registro no contiene avances y aún no existen `policies/`, `components/cloud_portability.py`, `.github/workflows/iac-ci.yml` ni `tests/test_governance_and_portability.py`. La Parte B prevé validadores puros, traducción de contratos a Azure/AWS y CI; excluye despliegues cloud reales en las pruebas. |
+
+```mermaid
+flowchart LR
+    A1["ADR-001 · E1<br/>Implementado"] --> A2["ADR-002 · E1<br/>Implementado"]
+    A2 --> A3["ADR-003 · E2<br/>Implementado"]
+    A3 --> A4["ADR-004 · E3/E4<br/>Aceptado · implementación pendiente"]
+```
+
+**Evidencia del corte:** `venv\Scripts\python -m pytest` → `25 passed`, código `0`; `venv\Scripts\python -m compileall -q .` → código `0`; runtime Python `3.14.2` compatible con el mínimo `>=3.10`. Las pruebas verifican configuración y grafo simulado. Balanceo HTTP, recuperación de recursos y objetivo de despliegue inferior a 15 segundos requieren ensayo con Pulumi CLI y Docker operativo; no se consideran demostrados por los mocks.
+
+**Próximo hito:** ejecutar la Parte B de ADR-004 en su propia tarea y ensayar la [demo de presentación](../../README.md#demo-en-vivo) del MVP local. La recuperación se plantea como reconciliación invocada por el operador; el código actual no incorpora un controlador continuo. El orquestador utiliza la contraseña predeterminada predecible del componente, aunque esté marcada como output secreto: sigue siendo una limitación del laboratorio.
 
 ---
 
 ## 7. Registro de Evolución del Contexto Maestro
 
 * **22-10-2026:** Creación de la línea base arquitectónica a partir del Informe Ejecutivo y aprobación de `ADR-001`.
+* **22-10-2026:** Actualización de la sección 6 por autorización del Responsable: sincronización de los cuatro ADRs en estado `Accepted`, distinción entre ADR-001 a ADR-003 implementados y ADR-004 pendiente, y grafo de dependencias. Se precisa el alcance de portabilidad previsto por la Parte B de ADR-004.
+* **22-10-2026:** Incorporación de la evidencia de 25 pruebas y compilación correcta; registro de los límites de validación operativa, reconciliación y contraseña predeterminada. Se enlaza el README ejecutivo con el guion de demo. Las secciones 1 a 5 se conservan sin modificaciones.
