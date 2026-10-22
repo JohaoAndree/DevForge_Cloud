@@ -1,0 +1,6 @@
+name: devforge-cloud
+description: Aprovisionador declarativo de infraestructuras multi-entorno con Pulumi y Python
+runtime:
+  name: python
+  options:
+    virtualenv: venv
