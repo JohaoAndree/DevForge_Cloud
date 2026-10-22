@@ -162,13 +162,23 @@ def test_entrypoint_exports_environment_and_network(network_mocks: _NetworkMocks
                 runpy.run_path(str(entrypoint_path))
 
         assert [call.args[0] for call in export_outputs.call_args_list] == [
-            "metadata", "environment_config", "network_name"
+            "metadata", "environment_config", "network_name",
+            "service_url", "pgadmin_url", "upstream_hosts",
         ]
         assert export_outputs.call_args_list[1].args[1] == expected
+        assert export_outputs.call_args_list[3].args[1] == "http://localhost:8080"
+        assert export_outputs.call_args_list[4].args[1] == "http://localhost:5050"
+        assert export_outputs.call_args_list[5].args[1] == ["devforge-dev-app-1:80"]
 
         def _assert_exports(network_name: str) -> None:
             assert network_name == "devforge-dev-net"
-            assert len(network_mocks.resources) == 1
+            networks = [
+                resource for resource in network_mocks.resources
+                if resource.typ == "docker:index/network:Network"
+            ]
+            assert len(networks) == 1
+            assert networks[0].inputs["name"] == network_name
+            assert networks[0].inputs["driver"] == "bridge"
 
         return export_outputs.call_args_list[2].args[1].apply(_assert_exports)
 

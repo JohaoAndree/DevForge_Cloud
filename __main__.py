@@ -1,10 +1,9 @@
-"""Orquesta la configuracion, red y metadatos del stack Pulumi."""
+"""Orquesta la configuracion, topologia y metadatos del stack Pulumi."""
 
 import pulumi
-import pulumi_docker
 
 from components.config_loader import EnvironmentConfig, load_environment_config
-from components.network_factory import create_isolated_network
+from components.environment_stack import DevForgeEnvironment
 
 
 def build_project_metadata() -> dict[str, str]:
@@ -16,13 +15,18 @@ def build_project_metadata() -> dict[str, str]:
     }
 
 
-def orchestrate_infrastructure() -> tuple[EnvironmentConfig, pulumi_docker.Network]:
-    """Crea la red del entorno y exporta su contrato y nombre."""
+def orchestrate_infrastructure() -> tuple[EnvironmentConfig, DevForgeEnvironment]:
+    """Crea el entorno y exporta su contrato, destinos y URLs."""
     env_config = load_environment_config()
-    network = create_isolated_network(env_config)
+    environment = DevForgeEnvironment(
+        f"devforge-{env_config.stack_name}-env", env_config=env_config,
+    )
     pulumi.export("environment_config", env_config.to_export_dict())
-    pulumi.export("network_name", network.name)
-    return env_config, network
+    pulumi.export("network_name", environment.network.name)
+    pulumi.export("service_url", environment.service_url)
+    pulumi.export("pgadmin_url", environment.pgadmin_url)
+    pulumi.export("upstream_hosts", list(environment.upstream_hosts))
+    return env_config, environment
 
 
 pulumi.export("metadata", build_project_metadata())
