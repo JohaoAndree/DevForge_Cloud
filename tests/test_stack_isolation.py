@@ -171,6 +171,7 @@ def test_entrypoint_exports_environment_and_network(network_mocks: _NetworkMocks
         assert [call.args[0] for call in export_outputs.call_args_list] == [
             "metadata", "environment_config", "network_name",
             "service_url", "pgadmin_url", "upstream_hosts",
+            "dr_mode", "backup_restore_plan",
         ]
         assert export_outputs.call_args_list[1].args[1] == expected
         assert export_outputs.call_args_list[3].args[1] == "http://localhost:8080"

@@ -26,6 +26,8 @@ def orchestrate_infrastructure() -> tuple[EnvironmentConfig, DevForgeEnvironment
     pulumi.export("service_url", environment.service_url)
     pulumi.export("pgadmin_url", environment.pgadmin_url)
     pulumi.export("upstream_hosts", list(environment.upstream_hosts))
+    pulumi.export("dr_mode", environment.dr_mode)
+    pulumi.export("backup_restore_plan", environment.backup_restore_plan.to_dict())
     return env_config, environment
 
 
