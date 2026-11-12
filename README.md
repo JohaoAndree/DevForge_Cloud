@@ -74,13 +74,13 @@ Nginx publica el puerto de servicio de cada stack y pgAdmin publica su puerto de
 | [ADR-001](docs/adrs/ADR-001.md) | E1 | Implementado | Proyecto IaC con Pulumi, Python y entorno virtual. |
 | [ADR-002](docs/adrs/ADR-002.md) | E1 | Implementado | Stacks `dev` y `prod` con configuración validada y redes Docker aisladas. |
 | [ADR-003](docs/adrs/ADR-003.md) | E2 | Implementado | Componente reutilizable con PostgreSQL persistente, pgAdmin condicional y balanceo Nginx. |
-| ADR-004 | E3 | Propuesto en la hoja de ruta | Recuperación ante desastres con *Pilot Light*, *Backup/Restore* y *Failover* automatizado. |
+| [ADR-004](docs/adrs/ADR-004.md) | E3 | Proposed | Estrategia de Recuperación ante Desastres mediante Pilot Light, Backup y Failover con Deployment Stamps |
 
-La propuesta de E3 mantiene PostgreSQL activo en `dr` con cero réplicas de cómputo en espera y fija un objetivo de tiempo de recuperación (RTO) inferior a 10 segundos. El [contexto maestro](docs/specs/context-master.md#6-hoja-de-ruta-y-grafo-de-adrs) recoge esta propuesta. El [ADR-004 vigente](docs/adrs/ADR-004.md) figura como `Accepted` para gobernanza, portabilidad cloud y GitOps.
+La propuesta de E3 mantiene PostgreSQL activo en `dr` con cero réplicas de cómputo en espera y fija un objetivo de tiempo de recuperación (RTO) inferior a 10 segundos. El [contexto maestro](docs/specs/context-master.md#6-hoja-de-ruta-y-grafo-de-adrs) recoge esta propuesta.
 
 ## Requisitos Previos e Instalación Rápida
 
-- Python 3.10 o superior y PowerShell 7.5 o superior para la asignación de la passphrase vacía de la demo. [Variables de entorno en PowerShell](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables).
+- Python 3.10 o superior y Windows PowerShell 5.1 o posterior. En PowerShell 5.1, asignar `""` elimina la variable de entorno y Pulumi solicita la passphrase de forma interactiva. La demo usa una passphrase fija de laboratorio con `$env:PULUMI_CONFIG_PASSPHRASE="devforge-local-passphrase"`. [Variables de entorno en PowerShell 5.1](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables?view=powershell-5.1).
 - Docker Desktop con el motor en ejecución. Comprueba la conexión con `docker info`.
 - Pulumi CLI disponible en `PATH`. Comprueba la instalación con `pulumi version`. [Instalación de Pulumi](https://www.pulumi.com/docs/install/).
 - Puertos `8080`, `5050` y `80` libres. El primer despliegue requiere acceso al registro de imágenes y a la descarga del plugin Docker de Pulumi.
@@ -100,11 +100,11 @@ El resultado esperado es `25 passed` y código de salida `0` en ambas verificaci
 
 ### Fase 1 — Inicialización del Backend de Estado Local
 
-Usa una terminal de PowerShell en la raíz del repositorio. Pulumi guardará el estado en `~/.pulumi`. La passphrase vacía corresponde a stacks nuevos de laboratorio. Para reutilizar un stack ya inicializado, conserva la passphrase con la que se creó. [Backend local de Pulumi](https://www.pulumi.com/docs/iac/cli/commands/pulumi_login/).
+Usa una terminal de PowerShell en la raíz del repositorio. Pulumi guardará el estado en `~/.pulumi`. La passphrase fija y no vacía evita el prompt interactivo al crear los stacks de laboratorio. Para reutilizar un stack ya inicializado, usa la passphrase con la que se creó. [Backend local de Pulumi](https://www.pulumi.com/docs/iac/cli/commands/pulumi_login/).
 
 ```powershell
 pulumi login --local
-$env:PULUMI_CONFIG_PASSPHRASE=""
+$env:PULUMI_CONFIG_PASSPHRASE="devforge-local-passphrase"
 ```
 
 ### Fase 2 — Despliegue del Stamp de Desarrollo (dev)
@@ -148,19 +148,22 @@ docker ps --filter "name=devforge-prod-app-2"
 docker rm -f devforge-prod-app-2
 pulumi refresh --yes
 pulumi up --yes
+docker restart devforge-prod-lb
 docker ps --filter "name=devforge-prod-app-2"
 1..6 | ForEach-Object { curl.exe -s http://localhost:80 | Select-String "Hostname" }
 ```
 
-Comprueba que la réplica aparece con un ID nuevo y que el balanceador vuelve a servir las tres réplicas. Si Docker le asigna otra IP y Nginx conserva la anterior, ejecuta `docker restart devforge-prod-lb` y repite las solicitudes. La configuración actual usa upstreams sin resolución dinámica. [Configuración de upstreams en Nginx](https://nginx.org/en/docs/http/ngx_http_upstream_module.html).
+Comprueba que la réplica aparece con un ID nuevo y que el balanceador vuelve a servir las tres réplicas. El reinicio hace que Nginx resuelva de nuevo los nombres de los upstreams y use la IP actual de la réplica. [Configuración de upstreams en Nginx](https://nginx.org/en/docs/http/ngx_http_upstream_module.html).
 
 ### Fase 5 — Limpieza de Entornos (Teardown)
 
-Elimina los recursos de ambos stacks de laboratorio. Esta operación elimina también los volúmenes y sus datos. [Pulumi destroy](https://www.pulumi.com/docs/iac/cli/commands/pulumi_destroy/).
+Conserva cualquier edición propia de los YAML antes de ejecutar la limpieza. `pulumi destroy` elimina los recursos de ambos stacks, incluidos los volúmenes y sus datos. `pulumi stack rm` retira los stacks del backend local y elimina sus archivos de configuración. `git restore` recupera los YAML versionados, sin el `encryptionsalt` añadido por Pulumi. [Pulumi destroy](https://www.pulumi.com/docs/iac/cli/commands/pulumi_destroy/) y [Pulumi stack rm](https://www.pulumi.com/docs/iac/cli/commands/pulumi_stack_rm/).
 
 ```powershell
 pulumi destroy --yes --stack prod
 pulumi destroy --yes --stack dev
+pulumi stack rm prod --yes
+pulumi stack rm dev --yes
+git restore Pulumi.dev.yaml Pulumi.prod.yaml
+git status
 ```
-
-Antes de volver a ejecutar las pruebas, revisa `git diff -- Pulumi.dev.yaml Pulumi.prod.yaml`. Si aparecen cambios generados por la demo, recupera los valores versionados de los YAML y conserva cualquier edición propia.
