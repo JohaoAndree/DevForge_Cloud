@@ -1,0 +1,12 @@
+config:
+  devforge-cloud:environment: "dr"
+  devforge-cloud:dr_mode: "pilot-light"
+  devforge-cloud:replicas: 0
+  devforge-cloud:lb_port: 8090
+  devforge-cloud:enable_pgadmin: false
+  devforge-cloud:pgadmin_port: 5050
+  devforge-cloud:db_name: "devforgedb"
+  devforge-cloud:db_user: "devforge_user"
+  devforge-cloud:primary_stack: "prod"
+  devforge-cloud:rpo_minutes: 15
+  devforge-cloud:rto_seconds: 10
