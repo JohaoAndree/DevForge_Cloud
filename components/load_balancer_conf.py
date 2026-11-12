@@ -40,3 +40,25 @@ def render_nginx_load_balancer_conf(
         "    }\n"
         "}\n"
     )
+
+
+def render_nginx_pilot_light_conf(stack_name: str) -> str:
+    """Renderiza la respuesta de espera del gateway sin destinos activos."""
+    if not stack_name.strip():
+        raise ValueError("stack_name no puede estar vacio")
+    return (
+        "events {\n"
+        "    worker_connections 1024;\n"
+        "}\n"
+        "\n"
+        "http {\n"
+        "    server {\n"
+        "        listen 80;\n"
+        "        location / {\n"
+        "            default_type text/plain;\n"
+        f'            return 503 "DevForge DR Stamp ({stack_name}) in Pilot Light Standby'
+        ' - Database Warm, Compute Scaled to 0\\n";\n'
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
