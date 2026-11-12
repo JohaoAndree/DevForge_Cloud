@@ -62,6 +62,12 @@ graph TD
 
 ```
 
+### 3.3 Patrones Arquitectónicos Cloud Adoptados
+
+- **Patrón principal — Deployment Stamps (Sellos de Despliegue).** `DevForgeEnvironment(pulumi.ComponentResource)` empaqueta red privada, persistencia, cómputo y balanceador en una unidad atómica y replicable. El MVP instancia los sellos `dev` y `prod`. E3 propone replicar el sello del sitio primario `prod` en un sitio secundario `dr`.
+- **Patrón complementario 1 — External Configuration Store.** `Pulumi.<stack>.yaml` desacopla los parámetros de dimensionamiento y modo de operación del código Python compartido. El cargador valida los valores y construye el contrato inmutable `EnvironmentConfig`.
+- **Patrón complementario 2 — Gateway Routing.** El contenedor `nginx:1.27-alpine` actúa como punto de entrada perimetral único para el tráfico de aplicación. El proxy inverso oculta la red bridge privada y distribuye el tráfico entre las réplicas activas. E3 propone extender el enrutamiento para conmutar al sitio secundario en modo *Failover*.
+
 ---
 
 ## 4. Contratos de Componentes y Reglas de Dominio
@@ -96,33 +102,30 @@ graph TD
 
 ## 5. Alcance por Etapas (Control de Scope para Parte B)
 
-* **Etapa Actual (`E1` - `E2` MVP):** Inicialización del proyecto Pulumi con Python y entorno virtual (`ADR-001`), configuración de stacks aislados `dev`/`prod` sobre proveedor Docker local (`ADR-002`), e implementación del componente `DevForgeEnvironment` con persistencia PostgreSQL, PgAdmin condicional, $N$ réplicas balanceadas y demostración de *Drift Detection / Self-Healing* (`ADR-003`).
-
-* **Fuera de Alcance de la Etapa Actual (`E3+`):** Validación estática de gobernanza y seguridad con *Policy as Code* (Pulumi CrossGuard), migración del proveedor de infraestructura hacia nube pública (Azure for Students / AWS) y automatización de pipelines GitOps CI/CD en GitHub Actions (`ADR-004`).
+- **E1-E2 (MVP Completado).** ADR-001 estableció el proyecto Pulumi con Python y entorno virtual. ADR-002 configuró stacks aislados `dev` y `prod` en Docker local. ADR-003 implementó `DevForgeEnvironment` con persistencia PostgreSQL, PgAdmin condicional, balanceo y reconciliación de recursos. Los tres ADR están implementados y verificados con 25 pruebas en verde.
+- **E3 (Siguiente Etapa).** Estrategias de Recuperación ante Desastres (*Pilot Light*, *Backup* y *Failover* automatizado) mediante *Deployment Stamps*. La propuesta mantiene PostgreSQL activo en el sello de contingencia `dr` con cero réplicas de cómputo en espera. Prevé respaldar y restaurar los datos, activar el cómputo y conmutar el tráfico ante una caída del sitio primario.
 
 ---
 
 ## 6. Hoja de Ruta y Grafo de ADRs
 
-**Corte de seguimiento: 22-10-2026.** El estado de aprobación se toma de cada ADR; el avance se contrasta con sus registros y los archivos presentes en el repositorio. Una decisión aceptada no implica que su implementación esté terminada.
+**Corte de seguimiento del 12-11-2026.** La fila `Proposed` registra la propuesta de recuperación ante desastres de E3. El [ADR-004 vigente](../adrs/ADR-004.md) figura como `Accepted` y documenta gobernanza, portabilidad cloud y automatización GitOps.
 
-| ID | Etapa | Decisión | Estado del ADR | Depende de | Avance y evidencia de implementación |
+| ID | Etapa | Decisión | Estado en la hoja de ruta | Depende de | Alcance y evidencia |
 | --- | --- | --- | --- | --- | --- |
-| [ADR-001](../adrs/ADR-001.md) | `E1` | Pulumi con Python como motor y lenguaje de IaC | `Accepted` (22-10-2026) | — | Implementado: manifiesto Python con `venv`, dependencias, metadatos del proyecto y pruebas de bootstrap. Registro: 3 pasos documentados. |
-| [ADR-002](../adrs/ADR-002.md) | `E1` | Docker local y aislamiento mediante Pulumi Stacks | `Accepted` (22-10-2026) | ADR-001 | Implementado: YAML de `dev`/`prod`, contrato inmutable `EnvironmentConfig`, validaciones y redes bridge `devforge-dev-net` / `devforge-prod-net`. Registro: 4 pasos documentados. |
-| [ADR-003](../adrs/ADR-003.md) | `E2` | Modularización con `ComponentResource` y balanceo de carga | `Accepted` (22-10-2026) | ADR-002 | Implementado: `DevForgeEnvironment`, PostgreSQL con volumen, PgAdmin condicional, réplicas `whoami`, Nginx y outputs del orquestador. Registro: 4 pasos documentados; grafo cubierto con mocks. |
-| [ADR-004](../adrs/ADR-004.md) | `E3` / `E4` | Gobernanza, portabilidad cloud y automatización GitOps | `Accepted` (22-10-2026) | ADR-003 | Pendiente: el Registro no contiene avances y aún no existen `policies/`, `components/cloud_portability.py`, `.github/workflows/iac-ci.yml` ni `tests/test_governance_and_portability.py`. La Parte B prevé validadores puros, traducción de contratos a Azure/AWS y CI; excluye despliegues cloud reales en las pruebas. |
+| [ADR-001](../adrs/ADR-001.md) | `E1` | Pulumi con Python como motor y lenguaje de IaC | `Accepted (Implementado)` | — | Manifiesto Python con `venv`, dependencias, metadatos y pruebas de bootstrap. |
+| [ADR-002](../adrs/ADR-002.md) | `E1` | Docker local y aislamiento mediante Pulumi Stacks | `Accepted (Implementado)` | ADR-001 | YAML de `dev` y `prod`, contrato inmutable `EnvironmentConfig` y redes bridge independientes. |
+| [ADR-003](../adrs/ADR-003.md) | `E2` | Modularización con `ComponentResource` y balanceo de carga | `Accepted (Implementado)` | ADR-002 | `DevForgeEnvironment`, PostgreSQL con volumen, PgAdmin condicional, réplicas, Nginx y outputs. |
+| ADR-004 | `E3` | Estrategia de Recuperación ante Desastres mediante Pilot Light, Backup y Failover con Deployment Stamps | `Proposed` | ADR-003 | Configuración de stack de contingencia (dr) en modo Pilot Light (DB activa y 0 réplicas de cómputo), mecanismo de Backup/Restore y conmutación Failover con RTO < 10s. |
 
 ```mermaid
 flowchart LR
     A1["ADR-001 · E1<br/>Implementado"] --> A2["ADR-002 · E1<br/>Implementado"]
     A2 --> A3["ADR-003 · E2<br/>Implementado"]
-    A3 --> A4["ADR-004 · E3/E4<br/>Aceptado · implementación pendiente"]
+    A3 --> A4["ADR-004 · E3<br/>Propuesta de recuperación ante desastres"]
 ```
 
-**Evidencia del corte:** `venv\Scripts\python -m pytest` → `25 passed`, código `0`; `venv\Scripts\python -m compileall -q .` → código `0`; runtime Python `3.14.2` compatible con el mínimo `>=3.10`. Las pruebas verifican configuración y grafo simulado. Balanceo HTTP, recuperación de recursos y objetivo de despliegue inferior a 15 segundos requieren ensayo con Pulumi CLI y Docker operativo; no se consideran demostrados por los mocks.
-
-**Próximo hito:** ejecutar la Parte B de ADR-004 en su propia tarea y ensayar la [demo de presentación](../../README.md#demo-en-vivo) del MVP local. La recuperación se plantea como reconciliación invocada por el operador; el código actual no incorpora un controlador continuo. El orquestador utiliza la contraseña predeterminada predecible del componente, aunque esté marcada como output secreto: sigue siendo una limitación del laboratorio.
+**Evidencia del MVP.** `venv\Scripts\python -m pytest` → `25 passed`, código `0`. `venv\Scripts\python -m compileall -q .` → código `0`. Las pruebas verifican configuración y grafo simulado. El balanceo HTTP y la reconciliación se comprueban con Docker en el [guion de demo](../../README.md#guion-paso-a-paso-para-demostración-en-vivo-exposición). En el MVP, el operador inicia la reconciliación. El RTO (objetivo de tiempo de recuperación) de E3 queda pendiente de validación.
 
 ---
 
@@ -131,3 +134,4 @@ flowchart LR
 * **22-10-2026:** Creación de la línea base arquitectónica a partir del Informe Ejecutivo y aprobación de `ADR-001`.
 * **22-10-2026:** Actualización de la sección 6 por autorización del Responsable: sincronización de los cuatro ADRs en estado `Accepted`, distinción entre ADR-001 a ADR-003 implementados y ADR-004 pendiente, y grafo de dependencias. Se precisa el alcance de portabilidad previsto por la Parte B de ADR-004.
 * **22-10-2026:** Incorporación de la evidencia de 25 pruebas y compilación correcta; registro de los límites de validación operativa, reconciliación y contraseña predeterminada. Se enlaza el README ejecutivo con el guion de demo. Las secciones 1 a 5 se conservan sin modificaciones.
+* **12-11-2026:** Cierre de la implementación del MVP (ADR-001 a ADR-003) con 25 pruebas en verde. Se formaliza la adopción de *Deployment Stamps*, *External Configuration Store* y *Gateway Routing*. E3 (ADR-004 en la hoja de ruta) se reorienta a recuperación ante desastres con *Pilot Light* y *Backup*.
