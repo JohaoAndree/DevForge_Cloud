@@ -1,17 +1,19 @@
 # DevForge Cloud
 
-DevForge Cloud aprovisiona entornos de desarrollo y producción en Docker local mediante infraestructura como código (IaC) declarativa con Pulumi y Python. Los scripts PowerShell de DevForge v1.0 instalaban herramientas con `winget` y carecían de un estado que permitiera retomar una ejecución parcial o detectar desviaciones. DevForge Cloud declara la topología deseada, registra los recursos aprovisionados y usa ese estado para aplicar cambios incrementales. El MVP incluye los stacks `dev` y `prod`.
+DevForge Cloud aprovisiona entornos de desarrollo, producción y recuperación ante desastres en Docker local mediante infraestructura como código (IaC) declarativa con Pulumi y Python. Los scripts PowerShell de DevForge v1.0 instalaban herramientas con `winget` y carecían de un estado que permitiera retomar una ejecución parcial o detectar desviaciones. DevForge Cloud declara la topología deseada, registra los recursos aprovisionados y usa ese estado para aplicar cambios incrementales.
+
+Los stacks `dev`, `prod` y `dr` usan el mismo componente. El stack `dr` usa `Pulumi.dr.yaml`, aísla sus recursos en la red `devforge-dr-net` y publica su gateway en `localhost:8090`. En *Pilot Light*, PostgreSQL sigue activo con cero réplicas de aplicación. Al promover `dr` a *Failover*, el gateway distribuye el tráfico entre tres réplicas.
 
 ## Patrones Arquitectónicos Cloud y Atributos de Calidad
 
 - **Deployment Stamps (principal).** `DevForgeEnvironment(pulumi.ComponentResource)` agrupa la red privada, el volumen de PostgreSQL, las réplicas y el balanceador. Cada stack instancia el mismo componente con nombres y recursos propios. [Deployment Stamps](https://learn.microsoft.com/en-us/azure/architecture/patterns/deployment-stamp).
 - **External Configuration Store (complementario).** `Pulumi.<stack>.yaml` guarda el dimensionamiento y las opciones de cada entorno fuera del código Python. El cargador valida el número de réplicas, los puertos y la habilitación de pgAdmin al construir el contrato inmutable `EnvironmentConfig`. [External Configuration Store](https://learn.microsoft.com/en-us/azure/architecture/patterns/edge-workload-configuration).
-- **Gateway Routing (complementario).** Cada sello usa `nginx:1.27-alpine` como proxy inverso y punto de entrada para el tráfico de aplicación. Nginx enruta las solicitudes a las réplicas dentro de la red bridge privada y las distribuye en Round-Robin en `prod`. [Gateway Routing](https://learn.microsoft.com/en-us/azure/architecture/patterns/gateway-routing).
+- **Gateway Routing (complementario).** Cada sello usa `nginx:1.27-alpine` como proxy inverso y punto de entrada para el tráfico de aplicación. Nginx distribuye las solicitudes en Round-Robin en `prod` y en `dr` en modo *Failover*. En *Pilot Light*, el gateway de `dr` responde con HTTP `503`. [Gateway Routing](https://learn.microsoft.com/en-us/azure/architecture/patterns/gateway-routing).
 
 | Atributo de calidad | Prioridad | Aplicación |
 | --- | --- | --- |
 | Mantenibilidad y reutilización | Alta | Un componente compartido y un contrato inmutable permiten ajustar cada stack mediante configuración. |
-| Disponibilidad y resiliencia | Alta | Nginx reparte las solicitudes entre tres réplicas en `prod`. El operador inicia la reconciliación (*Self-Healing*) con Pulumi. E3 propone *Pilot Light*, respaldo y restauración, y conmutación automatizada. |
+| Disponibilidad y resiliencia | Alta | El operador inicia la reconciliación (*Self-Healing*) con Pulumi y puede restaurar un respaldo lógico en PostgreSQL de `dr` antes de promoverlo a *Failover*. |
 | Seguridad por diseño | Media-alta | PostgreSQL usa `ports=[]` y mantiene el puerto `5432` dentro de la red del stack. `prod` omite pgAdmin. |
 | Portabilidad y costo | Media | Docker local permite reproducir la topología en el laboratorio sin una cuenta de nube. El contrato de configuración se comparte entre entornos. |
 
@@ -22,7 +24,8 @@ El plano de control lee la configuración del stack seleccionado y declara los r
 ```mermaid
 flowchart TD
     subgraph Control["Plano de control · Pulumi y Python"]
-        Config["Pulumi.&lt;stack&gt;.yaml"] --> Main["__main__.py"]
+        Config["Pulumi.dev.yaml · Pulumi.prod.yaml"] --> Main["__main__.py"]
+        DRConfig["Pulumi.dr.yaml"] --> Main
         Main --> Component["DevForgeEnvironment"]
     end
 
@@ -40,10 +43,18 @@ flowchart TD
             ProdLB --> ProdApp3["whoami · réplica 3"]
             ProdDB[("PostgreSQL · volumen propio")]
         end
+
+        subgraph DR["devforge-dr-net · dr"]
+            DRLB["Nginx · localhost:8090"]
+            DRLB --> DRStandby["Pilot Light · HTTP 503 · 0 réplicas"]
+            DRLB --> DRApp["Failover · Round-Robin · 3 réplicas whoami"]
+            DRDB[("PostgreSQL · activo en ambos modos")]
+        end
     end
 
     Component --> Dev
     Component --> Prod
+    Component --> DR
 ```
 
 Nginx publica el puerto de servicio de cada stack y pgAdmin publica su puerto de administración en `dev`. Las réplicas y PostgreSQL se mantienen en la red privada correspondiente.
@@ -56,17 +67,21 @@ Nginx publica el puerto de servicio de cada stack y pgAdmin publica su puerto de
 ├── Pulumi.yaml                    # Proyecto Pulumi con runtime Python y entorno virtual venv
 ├── Pulumi.dev.yaml                # Configuración de desarrollo
 ├── Pulumi.prod.yaml               # Configuración de producción
+├── Pulumi.dr.yaml                 # Configuración de contingencia en Pilot Light
 ├── requirements.txt              # Dependencias de IaC y pruebas
 ├── components/
 │   ├── config_loader.py           # Contrato EnvironmentConfig y validaciones
 │   ├── network_factory.py         # Red bridge aislada por stack
 │   ├── environment_stack.py      # Componente DevForgeEnvironment
-│   └── load_balancer_conf.py     # Upstreams y configuración de Nginx
+│   ├── load_balancer_conf.py      # Upstreams y configuración de Nginx
+│   └── disaster_recovery.py       # Planes de respaldo, restauración y promoción
 ├── tests/                        # Pruebas de configuración y del grafo de recursos
+│   └── test_disaster_recovery.py   # Pruebas de los modos y planes de recuperación
 └── docs/
     ├── adrs/                     # Decisiones de arquitectura
     ├── specs/context-master.md   # Diseño y hoja de ruta
     └── walkthroughs/             # Explicaciones de los ADR implementados
+        └── ADR-004.md             # Recuperación ante desastres
 ```
 
 | ADR | Etapa | Estado | Entrega |
@@ -74,16 +89,16 @@ Nginx publica el puerto de servicio de cada stack y pgAdmin publica su puerto de
 | [ADR-001](docs/adrs/ADR-001.md) | E1 | Implementado | Proyecto IaC con Pulumi, Python y entorno virtual. |
 | [ADR-002](docs/adrs/ADR-002.md) | E1 | Implementado | Stacks `dev` y `prod` con configuración validada y redes Docker aisladas. |
 | [ADR-003](docs/adrs/ADR-003.md) | E2 | Implementado | Componente reutilizable con PostgreSQL persistente, pgAdmin condicional y balanceo Nginx. |
-| [ADR-004](docs/adrs/ADR-004.md) | E3 | Proposed | Estrategia de Recuperación ante Desastres mediante Pilot Light, Backup y Failover con Deployment Stamps |
+| [ADR-004](docs/adrs/ADR-004.md) | E3 | Implementado | Recuperación ante desastres con Pilot Light, respaldo lógico y restauración, y promoción a Failover. |
 
-La propuesta de E3 mantiene PostgreSQL activo en `dr` con cero réplicas de cómputo en espera y fija un objetivo de tiempo de recuperación (RTO) inferior a 10 segundos. El [contexto maestro](docs/specs/context-master.md#6-hoja-de-ruta-y-grafo-de-adrs) recoge esta propuesta.
+E3 fija un objetivo de tiempo de recuperación (RTO) inferior a 10 segundos para la promoción de `dr`. El guion de la fase 5 incluye la medición de la promoción. [Hoja de ruta](docs/specs/context-master.md#6-hoja-de-ruta-y-grafo-de-adrs).
 
 ## Requisitos Previos e Instalación Rápida
 
-- Python 3.10 o superior y Windows PowerShell 5.1 o posterior. En PowerShell 5.1, asignar `""` elimina la variable de entorno y Pulumi solicita la passphrase de forma interactiva. La demo usa una passphrase fija de laboratorio con `$env:PULUMI_CONFIG_PASSPHRASE="devforge-local-passphrase"`. [Variables de entorno en PowerShell 5.1](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables?view=powershell-5.1).
+- Python 3.10 o superior y Windows PowerShell 5.1 o posterior.
 - Docker Desktop con el motor en ejecución. Comprueba la conexión con `docker info`.
 - Pulumi CLI disponible en `PATH`. Comprueba la instalación con `pulumi version`. [Instalación de Pulumi](https://www.pulumi.com/docs/install/).
-- Puertos `8080`, `5050` y `80` libres. El primer despliegue requiere acceso al registro de imágenes y a la descarga del plugin Docker de Pulumi.
+- Puertos `8080`, `5050`, `80` y `8090` libres. El primer despliegue requiere acceso al registro de imágenes y a la descarga del plugin Docker de Pulumi.
 
 Ejecuta los comandos desde la raíz del repositorio en Windows PowerShell.
 
@@ -94,13 +109,13 @@ venv\Scripts\python -m pytest
 venv\Scripts\python -m compileall -q .
 ```
 
-El resultado esperado es `25 passed` y código de salida `0` en ambas verificaciones. Las pruebas usan mocks de Pulumi para validar la configuración y el grafo de recursos. Ejecútalas antes de la demo. Al inicializar un stack, Pulumi puede reescribir su YAML y convertir valores que las pruebas comprueban como enteros o booleanos.
+El resultado esperado es `30 passed` y código de salida `0` en ambas verificaciones. Las pruebas usan mocks de Pulumi para validar la configuración y el grafo de recursos. Ejecútalas antes de la demo. Al inicializar un stack, Pulumi puede reescribir su YAML y convertir valores que las pruebas comprueban como enteros o booleanos.
 
 ## Guion Paso a Paso para Demostración en Vivo (Exposición)
 
 ### Fase 1 — Inicialización del Backend de Estado Local
 
-Usa una terminal de PowerShell en la raíz del repositorio. Pulumi guardará el estado en `~/.pulumi`. La passphrase fija y no vacía evita el prompt interactivo al crear los stacks de laboratorio. Para reutilizar un stack ya inicializado, usa la passphrase con la que se creó. [Backend local de Pulumi](https://www.pulumi.com/docs/iac/cli/commands/pulumi_login/).
+Usa una terminal de PowerShell en la raíz del repositorio. Pulumi guardará el estado en `~/.pulumi`. En Windows PowerShell 5.1, asignar `""` elimina la variable de entorno. La demo usa una passphrase fija de laboratorio para evitar el prompt interactivo. Para reutilizar un stack ya inicializado, usa la passphrase con la que se creó. [Backend local de Pulumi](https://www.pulumi.com/docs/iac/cli/commands/pulumi_login/) y [variables de entorno en Windows PowerShell 5.1](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables?view=powershell-5.1).
 
 ```powershell
 pulumi login --local
@@ -153,17 +168,70 @@ docker ps --filter "name=devforge-prod-app-2"
 1..6 | ForEach-Object { curl.exe -s http://localhost:80 | Select-String "Hostname" }
 ```
 
-Comprueba que la réplica aparece con un ID nuevo y que el balanceador vuelve a servir las tres réplicas. El reinicio hace que Nginx resuelva de nuevo los nombres de los upstreams y use la IP actual de la réplica. [Configuración de upstreams en Nginx](https://nginx.org/en/docs/http/ngx_http_upstream_module.html).
+Comprueba que la réplica aparece con un ID nuevo y que el balanceador vuelve a servir las tres réplicas. El reinicio refresca las conexiones de Nginx y vuelve a resolver los nombres de los upstreams para usar la IP actual de la réplica. [Configuración de upstreams en Nginx](https://nginx.org/en/docs/http/ngx_http_upstream_module.html).
 
-### Fase 5 — Limpieza de Entornos (Teardown)
+### Fase 5 — Recuperación ante Desastres: Pilot Light, Backup Lógico y Conmutación (Failover)
 
-Conserva cualquier edición propia de los YAML antes de ejecutar la limpieza. `pulumi destroy` elimina los recursos de ambos stacks, incluidos los volúmenes y sus datos. `pulumi stack rm` retira los stacks del backend local y elimina sus archivos de configuración. `git restore` recupera los YAML versionados, sin el `encryptionsalt` añadido por Pulumi. [Pulumi destroy](https://www.pulumi.com/docs/iac/cli/commands/pulumi_destroy/) y [Pulumi stack rm](https://www.pulumi.com/docs/iac/cli/commands/pulumi_stack_rm/).
+#### 1. Despliegue de `dr` en modo *Pilot Light*
+
+```powershell
+pulumi stack select dr --create
+pulumi up --yes
+pulumi stack output dr_mode
+pulumi stack output service_url
+docker ps --filter "name=devforge-dr"
+curl.exe -i http://localhost:8090
+```
+
+Los outputs esperados son `pilot-light` y `http://localhost:8090`. `docker ps` muestra solo `devforge-dr-db`, con PostgreSQL activo para la restauración, y `devforge-dr-lb`, con **cero contenedores de aplicación `whoami`**. La petición devuelve `HTTP/1.1 503 Service Temporarily Unavailable` con el mensaje `DevForge DR Stamp (dr) in Pilot Light Standby - Database Warm, Compute Scaled to 0`.
+
+#### 2. Simulación de datos críticos en `prod` y ejecución de *Backup/Restore* (RPO)
+
+Con `dr` seleccionado, consulta el plan de respaldo y restauración. Inserta un pedido ficticio en `prod`, toma el respaldo lógico y cárgalo en PostgreSQL de `dr`.
+
+```powershell
+pulumi stack output backup_restore_plan
+docker exec devforge-prod-db psql -U devforge_user -d devforgedb -c "CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, item TEXT); INSERT INTO orders (item) VALUES ('Pedido-Critico-Prod-001');"
+$demoBackupsCreated = -not (Test-Path -LiteralPath backups)
+New-Item -ItemType Directory -Force -Path backups | Out-Null
+docker exec devforge-prod-db pg_dump -U devforge_user -d devforgedb --clean --if-exists > backups/prod_to_dr_devforgedb.sql
+Get-Content backups/prod_to_dr_devforgedb.sql | docker exec -i devforge-dr-db psql -U devforge_user -d devforgedb
+```
+
+Comprueba que el volcado y la restauración terminan correctamente y que la consulta `SELECT * FROM orders;` en `devforge-dr-db` devuelve `Pedido-Critico-Prod-001` antes de destruir `prod`.
+
+#### 3. Simulación de desastre total en `prod` y promoción de `dr` a *Failover* (objetivo de RTO < 10 s)
 
 ```powershell
 pulumi destroy --yes --stack prod
+pulumi config set devforge-cloud:dr_mode failover --stack dr
+pulumi config set devforge-cloud:replicas 3 --stack dr
+Measure-Command { pulumi up --yes --stack dr }
+1..6 | ForEach-Object { curl.exe -s http://localhost:8090 | Select-String "Hostname" }
+docker inspect --format '{{.Name}} {{.Config.Hostname}}' devforge-dr-app-1 devforge-dr-app-2 devforge-dr-app-3
+docker exec devforge-dr-db psql -U devforge_user -d devforgedb -c "SELECT * FROM orders;"
+```
+
+Lee `TotalSeconds` en el resultado de `Measure-Command`. Si la actualización termina correctamente en menos de 10 segundos y `dr` ya responde a las solicitudes, se cumple el objetivo de RTO de la demo para la promoción. La red y PostgreSQL ya estaban activos en *Pilot Light*, por lo que la promoción aprovisiona el cómputo y actualiza el gateway. [Measure-Command](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/measure-command?view=powershell-5.1).
+
+Las seis solicitudes siguientes comprueban el paso de HTTP `503` al balanceo Round-Robin en `localhost:8090`. Deben aparecer tres hostnames en dos ciclos. `docker inspect` permite relacionarlos con `devforge-dr-app-1`, `devforge-dr-app-2` y `devforge-dr-app-3`. [Docker inspect](https://docs.docker.com/reference/cli/docker/inspect/).
+
+La consulta SQL confirma que `Pedido-Critico-Prod-001` sigue disponible después de destruir `prod`. El RPO observado es cero respecto al último snapshot para el dato de prueba, que se escribió antes de tomar el respaldo.
+
+### Fase 6 — Limpieza de Entornos (Teardown)
+
+Conserva cualquier edición propia de los YAML antes de ejecutar la limpieza. `pulumi destroy` elimina los recursos de `dr`, `prod` y `dev`, incluidos sus volúmenes y datos. Si completaste la fase 5, `prod` ya está destruido. `pulumi stack rm` retira los stacks del backend local y elimina sus archivos de configuración. En la misma sesión de PowerShell, el bloque elimina `backups/` si se creó en la demo y recupera los tres YAML versionados con `git restore`. [Pulumi destroy](https://www.pulumi.com/docs/iac/cli/commands/pulumi_destroy/) y [Pulumi stack rm](https://www.pulumi.com/docs/iac/cli/commands/pulumi_stack_rm/).
+
+```powershell
+pulumi destroy --yes --stack dr
+pulumi destroy --yes --stack prod
 pulumi destroy --yes --stack dev
+pulumi stack rm dr --yes
 pulumi stack rm prod --yes
 pulumi stack rm dev --yes
-git restore Pulumi.dev.yaml Pulumi.prod.yaml
+if ($demoBackupsCreated -and (Test-Path -LiteralPath backups)) {
+    Remove-Item -LiteralPath backups -Recurse -Force
+}
+git restore Pulumi.dev.yaml Pulumi.prod.yaml Pulumi.dr.yaml
 git status
 ```
