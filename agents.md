@@ -113,10 +113,12 @@ Antes de editar: `git branch --show-current` y `git status`. Si estás en la ram
 - En pruebas, el docstring enuncia el comportamiento que se garantiza, no cómo se prepara. Comenta solo preparaciones no evidentes.
 
 ## Walkthrough (opcional)
-Tras entregar el «Resumen final», ayuda al Responsable a redactar `docs/walkthroughs/<id>.md`.
-- **Contenido:** breve. Qué se implementó, por qué (enlazando la decisión que lo originó) y cómo funciona. Debe permitirle defenderlo oralmente; no es un listado de cambios (eso está en el Registro y en git). Si algo no es claro para explicarlo, pregunta en vez de suponer.
-- **Git:** guárdalo en un commit propio `docs(<id>): agregar walkthrough`, aparte de los commits de implementación.
-- No forma parte de la «Definición de hecho».
+Tras entregar el «Resumen final», ayuda al Responsable a redactar `docs/walkthroughs/<id>.md` con la plantilla `docs/templates/walkthrough-template.md`. Es evidencia de comprensión: debe permitirle defender la implementación oralmente.
+- **Fuentes:** el Resumen final, el Registro y `git log`. No copies la especificación: enlaza sus secciones («Decisión», «Alcance», «Criterios de aceptación»).
+- **Contenido:** conserva las secciones de la plantilla y elimina las que no apliquen. Cada `Asumido:` relevante va en «Decisiones de implementación»; cada problema no bloqueante de la especificación, en «Límites y puntos abiertos». Afirma solo lo respaldado por una verificación ejecutada; lo demás va como «No demostrado».
+- **Prohibido:** listar archivos o cambios (eso es el Registro y git), reabrir decisiones del ADR, omitir limitaciones.
+- **Preguntas de estudio:** tras el commit del walkthrough, propón en el chat 3-4 preguntas sobre las decisiones no obvias de la implementación. No las incluyas en el archivo. Cada pregunta lleva una pista de una línea y la referencia (archivo, prueba o sección) donde verificar la respuesta. No des la respuesta. Cuando el Responsable responda, contrasta su respuesta con el código y las pruebas: indica qué es correcto, qué falta o es incorrecto, con evidencia. Da la respuesta completa solo si el Responsable la pide.
+- **Git:** commit propio `docs(<id>): agregar walkthrough`, aparte de los de implementación. No forma parte de la «Definición de hecho».
 
 ## Definición de hecho
 Completa solo si: los criterios de aceptación se cumplen; las pruebas y verificaciones pasan; los cambios propios están en commits ordinarios (no WIP); el árbol está limpio (salvo cambios ajenos previos, que se conservan y se informan); no quedan bloqueos pendientes.
