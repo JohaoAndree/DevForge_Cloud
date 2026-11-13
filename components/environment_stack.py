@@ -4,9 +4,11 @@ import pulumi
 import pulumi_docker
 
 from components.config_loader import EnvironmentConfig
+from components.disaster_recovery import build_backup_restore_plan
 from components.load_balancer_conf import (
     build_upstream_hosts,
     render_nginx_load_balancer_conf,
+    render_nginx_pilot_light_conf,
 )
 from components.network_factory import create_isolated_network
 
@@ -29,6 +31,8 @@ class DevForgeEnvironment(pulumi.ComponentResource):
     ) -> None:
         """Declara los recursos hijos y registra los outputs del entorno."""
         super().__init__("devforge:cloud:DevForgeEnvironment", name, None, opts)
+        self.dr_mode = env_config.dr_mode
+        self.backup_restore_plan = build_backup_restore_plan(env_config)
         child_opts = pulumi.ResourceOptions(parent=self)
         resolved_password = pulumi.Output.secret(
             f"devforge-{env_config.stack_name}-local-secret"
@@ -81,28 +85,36 @@ class DevForgeEnvironment(pulumi.ComponentResource):
                 ],
                 opts=child_opts,
             )
-        self.app_containers: tuple[pulumi_docker.Container, ...] = tuple(
-            pulumi_docker.Container(
-                resource_name=f"devforge-{env_config.stack_name}-app-{index}",
-                name=f"devforge-{env_config.stack_name}-app-{index}",
-                image=BACKEND_IMAGE,
-                restart="unless-stopped",
-                networks_advanced=[
-                    pulumi_docker.ContainerNetworksAdvancedArgs(name=self.network.name)
-                ],
-                envs=[
-                    f"WHOAMI_NAME=devforge-{env_config.stack_name}-app-{index}",
-                    f"DB_HOST=devforge-{env_config.stack_name}-db",
-                ],
-                ports=[],
-                opts=child_opts,
+        self.app_containers: tuple[pulumi_docker.Container, ...]
+        if self.dr_mode == "pilot-light":
+            self.app_containers = ()
+            self.upstream_hosts = ()
+            self.nginx_conf = render_nginx_pilot_light_conf(env_config.stack_name)
+            gateway_dependencies = [self.db_container]
+        else:
+            self.app_containers = tuple(
+                pulumi_docker.Container(
+                    resource_name=f"devforge-{env_config.stack_name}-app-{index}",
+                    name=f"devforge-{env_config.stack_name}-app-{index}",
+                    image=BACKEND_IMAGE,
+                    restart="unless-stopped",
+                    networks_advanced=[
+                        pulumi_docker.ContainerNetworksAdvancedArgs(name=self.network.name)
+                    ],
+                    envs=[
+                        f"WHOAMI_NAME=devforge-{env_config.stack_name}-app-{index}",
+                        f"DB_HOST=devforge-{env_config.stack_name}-db",
+                    ],
+                    ports=[],
+                    opts=child_opts,
+                )
+                for index in range(1, env_config.replicas + 1)
             )
-            for index in range(1, env_config.replicas + 1)
-        )
-        self.upstream_hosts = build_upstream_hosts(
-            env_config.stack_name, env_config.replicas,
-        )
-        self.nginx_conf = render_nginx_load_balancer_conf(self.upstream_hosts)
+            self.upstream_hosts = build_upstream_hosts(
+                env_config.stack_name, env_config.replicas,
+            )
+            self.nginx_conf = render_nginx_load_balancer_conf(self.upstream_hosts)
+            gateway_dependencies = list(self.app_containers)
         self.load_balancer = pulumi_docker.Container(
             resource_name=f"devforge-{env_config.stack_name}-lb",
             name=f"devforge-{env_config.stack_name}-lb",
@@ -118,7 +130,7 @@ class DevForgeEnvironment(pulumi.ComponentResource):
                 file="/etc/nginx/nginx.conf", content=self.nginx_conf,
             )],
             opts=pulumi.ResourceOptions(
-                parent=self, depends_on=list(self.app_containers),
+                parent=self, depends_on=gateway_dependencies,
             ),
         )
         self.service_url = f"http://localhost:{env_config.lb_port}"
@@ -131,4 +143,5 @@ class DevForgeEnvironment(pulumi.ComponentResource):
             "service_url": self.service_url,
             "pgadmin_url": self.pgadmin_url,
             "replicas": env_config.replicas,
+            "dr_mode": self.dr_mode,
         })

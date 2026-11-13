@@ -89,7 +89,14 @@ def test_load_environment_config_preserves_immutable_contract(stack_name: str) -
     with patch.dict("os.environ", _config_environment(values)):
         env_config = load_environment_config(pulumi.Config("devforge-cloud"), stack_name)
     expected = {key.split(":", 1)[1]: value for key, value in values.items()}
-    expected.update(stack_name=stack_name, network_name=f"devforge-{stack_name}-net")
+    expected.update(
+        stack_name=stack_name,
+        network_name=f"devforge-{stack_name}-net",
+        dr_mode="active",
+        primary_stack="prod",
+        rpo_minutes=15,
+        rto_seconds=10,
+    )
     assert env_config.to_export_dict() == expected
     assert type(env_config.replicas) is int
     assert type(env_config.enable_pgadmin) is bool
@@ -164,6 +171,7 @@ def test_entrypoint_exports_environment_and_network(network_mocks: _NetworkMocks
         assert [call.args[0] for call in export_outputs.call_args_list] == [
             "metadata", "environment_config", "network_name",
             "service_url", "pgadmin_url", "upstream_hosts",
+            "dr_mode", "backup_restore_plan",
         ]
         assert export_outputs.call_args_list[1].args[1] == expected
         assert export_outputs.call_args_list[3].args[1] == "http://localhost:8080"
